@@ -149,6 +149,7 @@ class EvalModel(testfile_path: String, modelfile_path: String) {
     tuple_return
   }
 
+
   def EvalMain() = {
     val map_bigram_model = LoadModel(modelfile_path)
     val tuple_result = EvalTestFile(testfile_path, map_bigram_model)
