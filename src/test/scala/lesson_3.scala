@@ -19,8 +19,9 @@ class MODEL_IO(path_to_file: String, separator: String){
     val outfile_ins = new PrintWriter(new File(path_to_file))
     map_model.foreach({
       case(key, value) =>
-        outfile_ins.write(s"$key$separator$value")
+        outfile_ins.write(s"$key$separator$value\n")
     })
+    outfile_ins.close()
   }
 
 
@@ -49,6 +50,29 @@ trait LOAD_FILE_FORMAT{
   ファイル形式を読み込んで、データ構造にもつ
    */
   import scala.io.Source
+
+
+  def load_from_raw(path_to_file: String):
+  mutable.ArrayBuffer[Tuple2[Float, Array[String]]] ={
+    /*
+    label付きでないファイルからデータ構造を起こす
+     */
+    val arraybuffer_word_in_sentence =
+      new scala.collection.mutable.ArrayBuffer[Tuple2[Float, Array[String]]]()
+
+    val sourcefile_ins = Source.fromFile(path_to_file)
+    sourcefile_ins.getLines().foreach({
+      line =>
+        val label: Float = 0f // 正解ラベル
+        val array_string_of_sentence: Array[String] = line.stripSuffix("\n").split(" ") // 訓練文
+        val tuple_answer_label_training_sentence =
+        Tuple2(label, array_string_of_sentence)  // 訓練ラベルと訓練文はタプルで管理する
+
+        arraybuffer_word_in_sentence += tuple_answer_label_training_sentence
+    })
+    arraybuffer_word_in_sentence
+  }
+
 
   def load_from_tsv(path_to_train_file: String):
   mutable.ArrayBuffer[Tuple2[Float, Array[String]]] = {
@@ -82,7 +106,7 @@ trait FEATURE_FUNCTIONS{
     val feature_map = mutable.Map[String, Int]()
 
     for (word <- array_string_input){
-      if(feature_map.contains(word)) {
+      if(!feature_map.contains(word)) {
         feature_map += (word -> 1)
       }
     }
@@ -95,7 +119,7 @@ trait PREDICT_AND_UPDATE{
   /*
   パーセプトロンのtrainingとupdateを行なう
    */
-  def PREDICT_ONE(weight_map: mutable.Map[String, _],
+  def PREDICT_ONE(weight_map: mutable.Map[String, Float],
                   feature_map: mutable.Map[String, Int]): Float = {
     /*
     重み関数と素性関数を使ってスコアを求める
@@ -104,7 +128,7 @@ trait PREDICT_AND_UPDATE{
     feature_map.foreach({
       case (key, value) =>
         if (weight_map.contains(key)) {
-          score += value + weight_map(key)
+          score += weight_map(key)
         }
     })
     if (score >= 0) {
@@ -114,12 +138,29 @@ trait PREDICT_AND_UPDATE{
     }
   }
 
+  def initialize_model(weight_map: mutable.Map[String, Float],
+                       feature_map: mutable.Map[String, Int]): mutable.Map[String, Float] = {
+    /*
+    モデルの初期化をする
+    feature_mapに登録されていないキーをモデルに新規登録する
+     */
+    feature_map.foreach({
+      case (key, value) =>
+        if(!weight_map.contains(key)){
+          weight_map += (key -> 0f)
+        }
+    })
+    return weight_map
+  }
+
+
   def UPDATE_WEIGHT(weight_map: mutable.Map[String, Float],
                     feature_map: mutable.Map[String, Int],
                     answer_label: Float): mutable.Map[String, Float] = {
     /*
     正解ラベルと予測ラベルが異なってた場合のみに、重みの更新を行なう
      */
+
     feature_map.foreach({
       case (name, value) =>
         val weight_old: Float = weight_map(name)
@@ -147,6 +188,7 @@ class TRAIN_MODEL(path_to_train_file:String)
       val array_training_sentence = tuple_instance._2
 
       val phi = unigram_feature(array_training_sentence)
+      weight_map = initialize_model(weight_map, phi)
       val y_dash = PREDICT_ONE(weight_map, phi)
       if (y != y_dash) {
         weight_map = UPDATE_WEIGHT(weight_map, phi, y)
@@ -160,13 +202,15 @@ class TRAIN_MODEL(path_to_train_file:String)
 }
 
 
-class MODEL_PREDICT(path_to_testfile: String, map_model: mutable.Map[String,_])
+class MODEL_PREDICT(path_to_testfile: String, map_model: mutable.Map[String, Float])
   extends PREDICT_AND_UPDATE with FEATURE_FUNCTIONS with LOAD_FILE_FORMAT{
   /*
   モデルで予測をする
+  ラベル付きでないファイルに対して予測を行なう
    */
   def predict(): Unit = {
-    val arraybuffer_word_in_sentence = load_from_tsv(path_to_testfile)
+    val arraybuffer_word_in_sentence = load_from_raw(path_to_testfile)
+
     for (tuple_sentence <- arraybuffer_word_in_sentence) {
       val correct_label = tuple_sentence._1
       val arraybuffer_word_in_sentence = tuple_sentence._2
@@ -175,23 +219,37 @@ class MODEL_PREDICT(path_to_testfile: String, map_model: mutable.Map[String,_])
       println(s"correct label is $correct_label and predicted label is $predicted_label")
     }
   }
+
+
+  def predict_for_labeled_data(): Unit = {
+    val arraybuffer_word_in_sentence = load_from_tsv(path_to_testfile)
+
+    for (tuple_sentence <- arraybuffer_word_in_sentence) {
+      val correct_label = tuple_sentence._1
+      val arraybuffer_word_in_sentence = tuple_sentence._2
+      val map_feature = unigram_feature(arraybuffer_word_in_sentence)
+      val predicted_label = PREDICT_ONE(map_model, map_feature)
+      println(s"correct label is $correct_label and predicted label is $predicted_label")
+    }
+
+  }
 }
+
 
 object lesson_3 {
   def main(args: Array[String]): Unit = {
-    val path_to_train_file: String = "src/test/resources/test/03-train-input.txt"
+    //val path_to_train_file: String = "src/test/resources/test/03-train-input.txt"
+    val path_to_train_file: String = "src/resources/data/titles-en-train.labeled"
 
     val training_ins = new TRAIN_MODEL(path_to_train_file)
     val weight_map = training_ins.TRAIN_MODEL()
 
     val model_path: String = "src/test/scala/lesson3_perceptron_model.tsv"
-
     val io_ins = new MODEL_IO(model_path, separator = "\t")
     io_ins.write_out_model(weight_map)
 
-    //TODO prediciton用のメソッドを実装する
-    //TODO テストファイルのパスを記述する
-    val path_to_testfile = "hogehoge"
+    // テストファイルのパスを指定して、ラベルを予測できるようにする
+    val path_to_testfile = "src/resources/data/titles-en-test.word"
     val prediction_ins = new MODEL_PREDICT(path_to_testfile, weight_map)
     prediction_ins.predict()
   }
