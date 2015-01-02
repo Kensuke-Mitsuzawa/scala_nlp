@@ -31,7 +31,7 @@ trait LOAD_RAW_FILE{
 }
 
 
-class TRAIN_UNIGRAM_MODLE(path_to_train_file: String) extends LOAD_RAW_FILE{
+class UNIGRAM_MODLE(path_to_train_file: String) extends LOAD_RAW_FILE{
   /*
   unigram言語モデルを構築する
    */
