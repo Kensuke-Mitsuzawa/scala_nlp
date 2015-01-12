@@ -133,7 +133,7 @@ object lesson5_hmm {
         val array_word_in_sentence = line.stripSuffix("\n").split(" ")
         val list_word_in_setence = array_word_in_sentence.toList
         // arrayの先頭に<s>, arrayの最後に</s>を挿入する
-        val list_of_sentence = "<s>" +: list_word_in_setence :+ "</s>"
+        val list_of_sentence = list_word_in_setence
 
         arraybuffer_unigram_training += list_of_sentence
     })
@@ -170,34 +170,102 @@ object lesson5_hmm {
   }
 
 
-  def HmmPosPredicting(ArrayBufferTestFile: mutable.ArrayBuffer[List[String]],
+  def HmmPosPredicting(ListInputSentence: List[String],
                        MapTransitionProb: mutable.Map[String, Float],
                        MapEmissionProb: mutable.Map[String, Float],
                        MapPossibleTags: mutable.Map[String, Int]) = {
+    /*
+    入力の１文に対して、POSの予測をする
+     */
 
-    HmmViterbiForward(ArrayBufferTestFile, MapTransitionProb, MapEmissionProb, MapPossibleTags)
+    val TupleMapBestScoreEdge =
+      HmmViterbiForward(ListInputSentence, MapTransitionProb, MapEmissionProb, MapPossibleTags)
+    println(TupleMapBestScoreEdge)
     // HmmViterbiBackward
   }
 
 
-  def HmmViterbiForward(ArrayBufferTestFile: mutable.ArrayBuffer[List[String]],
+  def HmmViterbiForward(ListInputSentence: List[String],
                         MapTransitionProb: mutable.Map[String, Float],
                         MapEmissionProb: mutable.Map[String, Float],
-                        MapPossibleTags: mutable.Map[String, Int]) = {
-
+                        MapPossibleTags: mutable.Map[String, Int]):
+  Tuple2[mutable.Map[String, String], mutable.Map[String, Float]] = {
+    /*
+    Viterbiのforward stepによるベストパスとスコアの探索を行なう
+     */
     val MapBestScore = mutable.Map[String, Float]()
     val MapBestEdge = mutable.Map[String, String]()
+
+    val LenghtOfSentence = ListInputSentence.length
 
     val StartTag = "0 <s>"
     MapBestScore(StartTag) = 0f
     MapBestEdge(StartTag) = "NULL"
 
-    // TODO forward stepの続きを書いていくことq
+    for(i <- 0 until LenghtOfSentence - 1){
+      for(prev <- MapPossibleTags.keys){
+        for(next <- MapPossibleTags.keys){
+          val WordAtIndex = ListInputSentence(i)
+          val BestscoreKey = s"$i $prev"
+          val TransitionKey = s"$prev $next"
+          val EmissionKey = s"$next $WordAtIndex"
+
+          if(MapBestScore.contains(BestscoreKey) & MapTransitionProb.contains(TransitionKey)){
+            val ScoreBestScore = MapBestScore(BestscoreKey)
+            val ScoreTransitionProb = -1.0f * math.log10(MapTransitionProb(TransitionKey)).toFloat
+            // スム〜ジングする
+            val ScoreEmissionProb = ProbSmooting(MapEmissionProb, EmissionKey)
+
+            val NewScore = ScoreBestScore + ScoreTransitionProb + ScoreEmissionProb
+
+            val NextIndex = i + 1
+            val NextNodeKey = s"$NextIndex $next"
+
+            // MapBestScoreが次のKeyを持っている時と、そうでない時で処理をわける
+            if(MapBestScore.contains(NextNodeKey) == false){
+              MapBestEdge(NextNodeKey) = s"$i $prev"
+              MapBestScore(NextNodeKey) = NewScore
+            } else if(MapBestScore.contains(NextNodeKey)){
+              val OldScore = MapBestScore(NextNodeKey)
+              if(OldScore < NewScore){
+                MapBestEdge(NextNodeKey) = s"$i $prev"
+                MapBestScore(NextNodeKey) = NewScore
+              }
+            }
+          }
+        }
+      }
+    }
+    // 最後に</s>のキーを登録する
+    val EndTag = s"$LenghtOfSentence </s>"
+    MapBestEdge(EndTag) = "NULL"
+    MapBestScore(EndTag) = 0f
+
+    return Tuple2(MapBestEdge, MapBestScore)
   }
 
 
   def HmmViterbiBackward() = {
 
+  }
+
+
+  def ProbSmooting(MapEmissionProb: mutable.Map[String, Float], EmissionKey: String): Float = {
+    // スムージングを行なう
+    // ハイパーパラメータ
+    val UnknownLambda = 0.01f
+    val NallWord = 100000
+
+    var ScoreEmissionProb = 0f
+    if(MapEmissionProb.contains(EmissionKey)){
+      val EmissionProb = MapEmissionProb(EmissionKey).toFloat
+      val SmoothedProb = UnknownLambda * EmissionProb + (1 - UnknownLambda) * (1/NallWord)
+      ScoreEmissionProb = -1.0f * math.log10(SmoothedProb).toFloat
+    } else {
+      val SmoothedProb = UnknownLambda
+      ScoreEmissionProb = -1.0f * math.log10(SmoothedProb).toFloat
+    }
+    return ScoreEmissionProb
   }
   // ------------------------------------------------
 
@@ -222,7 +290,9 @@ object lesson5_hmm {
     val MapTransitionProb = TupleModelMaps._1
     val MapEmissionProb = TupleModelMaps._2
     val MapPossibleTags = TupleModelMaps._3
-    HmmPosPredicting(ArrayBufferTestFile, MapTransitionProb, MapEmissionProb, MapPossibleTags)
+
+
+    HmmPosPredicting(ArrayBufferTestFile(0), MapTransitionProb, MapEmissionProb, MapPossibleTags)
 
   }
 
