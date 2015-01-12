@@ -4,7 +4,7 @@
 
 import model_io.MODEL_FILE_IO
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable.{ListBuffer, ArrayBuffer}
 import scala.io.Source
 
 class TrainTransitionEmissionProbs(PathToTrainFile: String,
@@ -173,36 +173,44 @@ object lesson5_hmm {
   def HmmPosPredicting(ListInputSentence: List[String],
                        MapTransitionProb: mutable.Map[String, Float],
                        MapEmissionProb: mutable.Map[String, Float],
-                       MapPossibleTags: mutable.Map[String, Int]) = {
+                       MapPossibleTags: mutable.Map[String, Int]): ListBuffer[String] = {
     /*
     入力の１文に対して、POSの予測をする
      */
 
     val TupleMapBestScoreEdge =
       HmmViterbiForward(ListInputSentence, MapTransitionProb, MapEmissionProb, MapPossibleTags)
-    println(TupleMapBestScoreEdge)
-    // HmmViterbiBackward
+    val MapBestEdge = TupleMapBestScoreEdge._1
+    val MapBestScore = TupleMapBestScoreEdge._2
+
+    val ArrayBufferOrderedPosTag = HmmViterbiBackward(MapBestEdge, ListInputSentence)
+
+    return ArrayBufferOrderedPosTag
   }
 
 
   def HmmViterbiForward(ListInputSentence: List[String],
                         MapTransitionProb: mutable.Map[String, Float],
                         MapEmissionProb: mutable.Map[String, Float],
-                        MapPossibleTags: mutable.Map[String, Int]):
+                        MapPossibleTags: mutable.Map[String, Int],
+                        smoothing:Boolean=true):
   Tuple2[mutable.Map[String, String], mutable.Map[String, Float]] = {
     /*
     Viterbiのforward stepによるベストパスとスコアの探索を行なう
      */
     val MapBestScore = mutable.Map[String, Float]()
-    val MapBestEdge = mutable.Map[String, String]()
+    var MapBestEdge = mutable.Map[String, String]()
+    var ScoreEmissionProb = 0f
 
+    var NextNodeKey = ""
     val LenghtOfSentence = ListInputSentence.length
 
     val StartTag = "0 <s>"
     MapBestScore(StartTag) = 0f
     MapBestEdge(StartTag) = "NULL"
 
-    for(i <- 0 until LenghtOfSentence - 1){
+
+    for(i <- 0 to LenghtOfSentence - 1){
       for(prev <- MapPossibleTags.keys){
         for(next <- MapPossibleTags.keys){
           val WordAtIndex = ListInputSentence(i)
@@ -213,13 +221,17 @@ object lesson5_hmm {
           if(MapBestScore.contains(BestscoreKey) & MapTransitionProb.contains(TransitionKey)){
             val ScoreBestScore = MapBestScore(BestscoreKey)
             val ScoreTransitionProb = -1.0f * math.log10(MapTransitionProb(TransitionKey)).toFloat
-            // スム〜ジングする
-            val ScoreEmissionProb = ProbSmooting(MapEmissionProb, EmissionKey)
+            if(smoothing == true) {
+              // スム〜ジングする
+              ScoreEmissionProb = ProbSmooting(MapEmissionProb, EmissionKey)
+            } else {
+              ScoreEmissionProb = MapEmissionProb(EmissionKey)
+            }
 
             val NewScore = ScoreBestScore + ScoreTransitionProb + ScoreEmissionProb
 
             val NextIndex = i + 1
-            val NextNodeKey = s"$NextIndex $next"
+            NextNodeKey = s"$NextIndex $next"
 
             // MapBestScoreが次のKeyを持っている時と、そうでない時で処理をわける
             if(MapBestScore.contains(NextNodeKey) == false){
@@ -227,7 +239,7 @@ object lesson5_hmm {
               MapBestScore(NextNodeKey) = NewScore
             } else if(MapBestScore.contains(NextNodeKey)){
               val OldScore = MapBestScore(NextNodeKey)
-              if(OldScore < NewScore){
+              if(OldScore > NewScore){
                 MapBestEdge(NextNodeKey) = s"$i $prev"
                 MapBestScore(NextNodeKey) = NewScore
               }
@@ -236,25 +248,18 @@ object lesson5_hmm {
         }
       }
     }
-    // 最後に</s>のキーを登録する
-    val EndTag = s"$LenghtOfSentence </s>"
-    MapBestEdge(EndTag) = "NULL"
-    MapBestScore(EndTag) = 0f
+    // 最後のIndexから</s>への処理を行なう
+    MapBestEdge = SelectLastEdge(MapBestScore, MapBestEdge, LenghtOfSentence)
 
     return Tuple2(MapBestEdge, MapBestScore)
-  }
-
-
-  def HmmViterbiBackward() = {
-
   }
 
 
   def ProbSmooting(MapEmissionProb: mutable.Map[String, Float], EmissionKey: String): Float = {
     // スムージングを行なう
     // ハイパーパラメータ
-    val UnknownLambda = 0.01f
-    val NallWord = 100000
+    val UnknownLambda = 0.0001f
+    val NallWord = 1000000
 
     var ScoreEmissionProb = 0f
     if(MapEmissionProb.contains(EmissionKey)){
@@ -267,6 +272,62 @@ object lesson5_hmm {
     }
     return ScoreEmissionProb
   }
+
+
+  def SelectLastEdge(MapBestScore: mutable.Map[String, Float],
+                     MapBestEdge: mutable.Map[String, String],
+                     LenghtOfSentence: Int): mutable.Map[String, String] = {
+    /*
+    MapBestScoreを参照して、minのキーを指定する
+     */
+    var LastEdge = ""
+    var ValueOfLastEdge = 100000000f
+    MapBestScore.foreach({
+      case(key, value) =>
+        val ArrayOfIndexTag = key.split(" ")
+        val Index = ArrayOfIndexTag(0)
+        if(Index == LenghtOfSentence.toString){
+          if(value < ValueOfLastEdge){
+            LastEdge = key
+            ValueOfLastEdge = value
+          }
+        }
+    })
+    val LastIndex = LenghtOfSentence + 1
+    val EndTag = s"$LastIndex </s>"
+    MapBestEdge(EndTag) = LastEdge
+
+    return MapBestEdge
+  }
+
+
+
+  def HmmViterbiBackward(MapBestEdge: mutable.Map[String, String],
+                         ListInputSentence: List[String]): mutable.ListBuffer[String] = {
+
+
+    val ListBufferTags = mutable.ListBuffer[String]()
+
+    var LengthOfSentence  = ListInputSentence.length
+    val LastIndexForSentenceTag = LengthOfSentence + 1
+    val NextEdgeKey = s"$LastIndexForSentenceTag </s>"
+    var NextEdge = MapBestEdge(NextEdgeKey)
+
+    while(NextEdge!="0 <s>"){
+      val ArrayOfPositionTag = NextEdge.split(" ")
+      val Position = ArrayOfPositionTag(0)
+      val Tag = ArrayOfPositionTag(1)
+
+      ListBufferTags += Tag
+      NextEdge = MapBestEdge(NextEdge)
+    }
+    val ListBufferOrdered = ListBufferTags.reverse
+
+    return ListBufferOrdered
+  }
+
+
+
   // ------------------------------------------------
 
 
@@ -291,9 +352,10 @@ object lesson5_hmm {
     val MapEmissionProb = TupleModelMaps._2
     val MapPossibleTags = TupleModelMaps._3
 
-
-    HmmPosPredicting(ArrayBufferTestFile(0), MapTransitionProb, MapEmissionProb, MapPossibleTags)
-
+    ArrayBufferTestFile.foreach({
+      ListOfSentence =>
+        println(ListOfSentence)
+        println(HmmPosPredicting(ListOfSentence, MapTransitionProb, MapEmissionProb, MapPossibleTags))
+    })
   }
-
 }
